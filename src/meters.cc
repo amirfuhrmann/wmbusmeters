@@ -1295,10 +1295,53 @@ bool checkCommonField(string *buf, string desired_field, Meter *m, Telegram *t, 
     return false;
 }
 
+// Helper to match expanded template field names for CSV.
+static bool tryExpandedTemplateField(string *buf,
+                                     string desired_field,
+                                     Meter *m,
+                                     char c,
+                                     bool human_readable)
+{
+    string base; Unit u;
+    if (!extractUnit(desired_field, &base, &u)) return false;
+
+    double v = m->getNumericValue(base, u);
+    if (std::isnan(v)) return false;
+
+    if (u == Unit::DateLT)
+    {
+        *buf += strdate(v);
+    }
+    else if (u == Unit::DateTimeLT)
+    {
+        *buf += strdatetime(v);
+    }
+    else if (u == Unit::DateTimeUTC)
+    {
+        *buf += strTimestampUTC(v);
+    }
+    else
+    {
+        *buf += valueToString(v, u);
+        if (human_readable)
+        {
+            *buf += " ";
+            *buf += unitToStringHR(u);
+        }
+    }
+    *buf += c;
+    return true;
+}
+
 // Is the desired field one of the meter printable fields?
 bool checkPrintableField(string *buf, string desired_field, Meter *m, Telegram *t, char c,
                          vector<FieldInfo> &fields, bool human_readable)
 {
+    // First try expanded template (history/target etc) names.
+    if (tryExpandedTemplateField(buf, desired_field, m, c, human_readable))
+    {
+        return true;
+    }
 
     for (FieldInfo &fi : fields)
     {
@@ -2314,6 +2357,17 @@ DriverInfo pickMeterDriver(Telegram *t)
         if (p->detect(manufacturer, version, type))
         {
             return *p;
+        }
+    }
+
+    // No loaded driver matched. Check if a builtin XMQ driver exists for this MVT.
+    const char *builtin_name = findBuiltinDriver(manufacturer, version, type);
+    if (builtin_name)
+    {
+        if (loadBuiltinDriver(builtin_name))
+        {
+            DriverInfo *di = lookupDriver(builtin_name);
+            if (di) return *di;
         }
     }
 
